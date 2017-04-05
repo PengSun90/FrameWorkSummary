@@ -1,0 +1,49 @@
+/frameworks/base/services/core/java/com/android/server/am/ActiveServices.java
+/frameworks/base/services/core/java/com/android/server/am/ProcessRecord.java
+
+/frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
+/frameworks/base/core/java/android/app/IActivityManager.java
+/frameworks/base/core/java/android/app/ActivityManagerNative.java (内含ActivityManagerProxy类)
+/frameworks/base/core/java/android/app/ActivityManager.java
+
+/frameworks/base/core/java/android/app/IApplicationThread.java
+/frameworks/base/core/java/android/app/ApplicationThreadNative.java (内含ApplicationThreadProxy类)
+/frameworks/base/core/java/android/app/ActivityThread.java (内含ApplicationThread类)
+
+/frameworks/base/core/java/android/app/ContextImpl.java
+1.activity启动 参考:http://gityuan.com/2016/03/12/start-activity/
+startActivity(intent) frameworks/base/core/java/android/app/activity.java
+	startActivityForResult(intent, -1) frameworks/base/core/java/android/app/activity.java
+		startActivityForResult(intent, requestCode, null); frameworks/base/core/java/android/app/activity.java
+			mInstrumentation.execStartActivity(this, mMainThread.getApplicationThread(), mToken, this,intent, requestCode, options); frameworks/base/core/java/android/app/activity.java //mToken启动activity的token
+				ActivityManagerNative.getDefault().startActivity(whoThread, who.getBasePackageName(),intent,intent.resolveTypeIfNeeded(who.getContentResolver()),token, target != null ? target.mEmbeddedID:null,requestCode, 0, null, options); frameworks/base/core/java/android/app/Instrumentation.java //跨进程调用
+					startActivityAsUser(caller, callingPackage, intent, resolvedType, resultTo, resultWho, requestCode, startFlags, profilerInfo, options,UserHandle.getCallingUserId()) frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //1.caller: 当前应用的ApplicationThread对象mAppThread;2.callingPackage: 调用当前ContextImpl.getBasePackageName(),获取当前Activity所在包名;3.intent: 这便是启动Activity时,传递过来的参数;4.resolvedType: 调用intent.resolveTypeIfNeeded而获取;5.resultTo: 来自于当前Activity.mToken6.resultWho: 来自于当前Activity.mEmbeddedID7.requestCode = -1;8.startFlags = 0;9.profilerInfo = null;10.options = null;
+						mStackSupervisor.startActivityMayWait(caller, -1, callingPackage, intent,resolvedType, null, null, resultTo, resultWho, requestCode, startFlags,profilerInfo, null, null, options, false, userId, null, null);frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java  //见 http://gityuan.com/2016/03/12/start-activity/ 2.7 ASS.startActivityMayWait
+							resolveActivity(intent, resolvedType, startFlags, profilerInfo, userId); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java  //ASS.resolveActivity()方法的核心功能是找到相应的Activity组件，并保存到intent对象。
+								AppGlobals.getPackageManager().resolveIntent(intent, resolvedType,PackageManager.MATCH_DEFAULT_ONLY|ActivityManagerService.STOCK_PM_FLAGS, userId);frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java
+									queryIntentActivities(intent, resolvedType, flags, userId); frameworks/base/services/core/java/com/android/server/pmPackageManagerService.java  //comp 对应相应的此 Intent(Context packageContext, Class<?> cls)构造方法
+							startActivityLocked(caller, intent, resolvedType, aInfo,voiceSession, voiceInteractor, resultTo, resultWho,requestCode, callingPid, callingUid, callingPackage,realCallingPid, realCallingUid, startFlags, options, ignoreTargetSecurity,componentSpecified, null, container, inTask); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java  
+								ActivityRecord r = new ActivityRecord(mService, callerApp, callingUid, callingPackage,intent, resolvedType, aInfo, mService.mConfiguration, resultRecord, resultWho,requestCode, componentSpecified, voiceSession != null, this, container, options); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java //创建ActivityRecord类的对象r
+								mService.checkAppSwitchAllowedLocked(callingPid, callingUid,realCallingPid, realCallingUid, "Activity start") frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java //当mAppSwitchesAllowedTime时间小于当前时长,或者具有STOP_APP_SWITCHES的权限,则允许app发生切换操作.
+								doPendingActivityLaunchesLocked(false); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java mPendingActivityLaunches记录着所有将要启动的Activity, 是由于在startActivityLocked的过程时App切换功能被禁止, 也就是不运行切换Activity, 那么此时便会把相应的Activity加入到mPendingActivityLaunches队列. 该队列的成员在执行完doPendingActivityLaunchesLocked便会清空.
+								startActivityUncheckedLocked(r, sourceRecord, voiceSession, voiceInteractor,startFlags, true, options, inTask); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java  //r就为ActivityRecord类创建的对象r,此方法launchFlags则为intent中的启动模式，对应intent.getFlags();
+									 targetStack.startActivityLocked(r, newTask, doResume, keepCurTransition, options); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java
+										主要是选择正切的activity的堆栈，创建相应的token frameworks/base/services/core/java/com/android/server/am/ActivityStack.java
+										mStackSupervisor.resumeTopActivitiesLocked(this, r, options); frameworks/base/services/core/java/com/android/server/am/ActivityStack.java
+											targetStack.resumeTopActivityLocked(target, targetOptions); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java
+												resumeTopActivityInnerLocked(prev, options); frameworks/base/services/core/java/com/android/server/am/ActivityStack.java //inResumeTopActivity用于保证每次只有一个Activity执行resumeTopActivityLocked()操作.
+													mStackSupervisor.pauseBackStacks(userLeaving, true, dontWaitForPause); frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java //暂停其他Activity
+													startPausingLocked(userLeaving, false, true, dontWaitForPause) frameworks/base/services/core/java/com/android/server/am/ActivityStack.java
+														completePauseLocked(false); frameworks/base/services/core/java/com/android/server/am/ActivityStack.java
+													mStackSupervisor.startSpecificActivityLocked(next, true, true); frameworks/base/services/core/java/com/android/server/am/ActivityStack.java
+														mService.startProcessLocked(r.processName, r.info.applicationInfo, true, 0,"activity", r.intent.getComponent(), false, false, true);	frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java
+															gr.attachApplication(mAppThread);  frameworks/base/core/java/android/app/ActivityThread.java//进程启动完，绑定activity进程。
+																thread.bindApplication(...)  frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //调用activitythread的bindapplication,将应用进程的ApplicationThread对象绑定到ActivityManagerService，也就是说获得AppliacationThread对象的代理对象。并且创建application对象并调用其 oncreate方法。
+																mStackSupervisor.attachApplicationLocked(app) frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //调用activitythread的bindapplication 间接调用realStartActivityLocked(...)
+																	attachApplicationLocked(ProcessRecord app)  frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java
+																		realStartActivityLocked(hr, app, true, true) frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java //真正的启动Activity【见流程2.17】此时为进程未创建的情况。进程存在时直接调用realStartActivityLocked(r, app, andResume, checkConfig);
+																			app.thread.scheduleLaunchActivity(new Intent(r.intent), r.appToken,System.identityHashCode(r), r.info, new Configuration(mService.mConfiguration),new Configuration(stack.mOverrideConfig), r.compat, r.launchedFromPackage,task.voiceInteractor, app.repProcState, r.icicle, r.persistentState, results,newIntents, !andResume, mService.isNextTransitionForward(), profilerInfo);  frameworks/base/services/core/java/com/android/server/am/ActivityStackSupervisor.java  //包装token等变量，并且发送H.LAUNCH_ACTIVITY消息
+																				H.LAUNCH_ACTIVITY frameworks/base/core/java/android/appActivityThread.java
+																					handleLaunchActivity(r, null); frameworks/base/core/java/android/appActivityThread.java
+																						performLaunchActivity(r, customIntent); frameworks/base/core/java/android/appActivityThread.java 主要是调用activity的oncreate方法。
+																						handleResumeActivity(r.token, false, r.isForward,r.reasonFlags/*LEUI-10257*/,!r.activity.mFinished && !r.startsNotResumed); frameworks/base/core/java/android/appActivityThread.java 调用activity的onresume方法。

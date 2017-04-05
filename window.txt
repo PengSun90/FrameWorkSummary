@@ -1,0 +1,70 @@
+1.初始化过程
+frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  main(final Context context,final InputManagerService im,final boolean haveInputMethods, final boolean showBootMsgs,final boolean onlyCore)
+	frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  WindowManagerService(Context context, InputManagerService inputManager,boolean haveInputMethods, boolean showBootMsgs, boolean onlyCore)
+		frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  getDisplayContentLocked(final int displayId)
+			frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  newDisplayContentLocked(final Display display) //创建DisplayContent,用于支持多屏幕的功能.比如目前除了本身真实的屏幕之外,还有Wifi display虚拟屏幕.
+		frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  initPolicy() 
+			frameworks/base/services/core/java/com/android/server/policy/PhoneWindowManager.java init(Context context, IWindowManager windowManager,WindowManagerFuncs windowManagerFuncs)
+frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java displayReady()
+frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java systemReady()
+	frameworks/base/services/core/java/com/android/server/policy/PhoneWindowManager.java systemReady()
+
+2.startingWindow
+frameworks/base/services/core/java/com/android/server/am/ActivityStack.java  startActivityLocked(ActivityRecord r, boolean newTask,boolean doResume, boolean keepCurTransition, Bundle options)
+	frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  setAppStartingWindow(IBinder token, String pkg,int theme, CompatibilityInfo compatInfo,CharSequence nonLocalizedLabel, int labelRes, int icon, int logo,int windowFlags, IBinder transferFrom, boolean createIfNeeded)
+		frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  H.handleMessage ADD_STARTING
+			frameworks/base/services/core/java/com/android/server/policy/PhoneWindowManager.java addStartingWindow(IBinder appToken, String packageName, int theme,CompatibilityInfo compatInfo, CharSequence nonLocalizedLabel, int labelRes,int icon, int logo, int windowFlags)
+				frameworks/base/core/java/android/view/WindowManagerImpl.java  addView(View view,  ViewGroup.LayoutParams params)
+
+3.结束startingWindow
+组件启动之后, 需要先把startingWindow去掉,再显示真正的窗口. window更新的过程都会调用WMS.performLayoutAndPlaceSurfacesLocked方法, 接下来,从这个方法说起.
+frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java performLayoutAndPlaceSurfacesLocked()
+	frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java   performLayoutAndPlaceSurfacesLockedLoop()
+		frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  performLayoutAndPlaceSurfacesLockedInner(boolean recoveringMemory)
+			frameworks/base/services/core/java/com/android/server/wm/WindowStateAnimator.java  commitFinishDrawingLocked() 
+				frameworks/base/services/core/java/com/android/server/wm/WindowStateAnimator.java  performShowLocked()
+					frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java  H.FINISHED_STARTING
+						frameworks/base/services/core/java/com/android/server/policy/PhoneWindowManager.java removeStartingWindow(IBinder appToken, View window)
+							frameworks/base/core/java/android/view/WindowManagerImpl.java  removeView(View view)
+								frameworks/base/core/java/android/view/WindowManagerGlobal.java removeView(View view, boolean immediate)
+									frameworks/base/core/java/android/view/ViewRootImpl.java die(boolean immediate)
+										frameworks/base/core/java/android/view/ViewRootImpl.java doDie()
+											frameworks/base/core/java/android/view/WindowManagerGlobal.java  doRemoveView(ViewRootImpl root)
+											
+4.正常启动activity  有用的连接:http://gityuan.com/2017/01/22/start-activity-wms/;http://blog.csdn.net/kc58236582/article/details/53079345
+frameworks/base/services/core/java/com/android/server/am/ActivityStack.java  startActivityLocked(ActivityRecord r, boolean newTask,boolean doResume, boolean keepCurTransition, Bundle options)
+	frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java addAppToken(int addPos, IApplicationToken token, int taskId, int stackId,int requestedOrientation, boolean fullscreen, boolean showForAllUsers, int userId,int configChanges, boolean voiceInteraction, boolean launchTaskBehind)
+		frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java   mTokenMap.put(token.asBinder(), atoken);//保存在mTokenMap中 token为key（Activity的binder对象）  
+	frameworks/base/core/java/android/ActivityThread.java  performLaunchActivity(ActivityClientRecord r, Intent customIntent) 
+		frameworks/base/core/java/android/app/Activity.java attach(Context context, ActivityThread aThread,Instrumentation instr, IBinder token, int ident,Application application, Intent intent, ActivityInfo info,CharSequence title, Activity parent, String id,NonConfigurationInstances lastNonConfigurationInstances,Configuration config, String referrer, IVoiceInteractor voiceInteractor)
+			frameworks/base/core/java/com/android/internal/policy/PhoneWindow.java PhoneWindow(Context context)
+				frameworks/base/core/java/android/view/Window.java setWindowManager(WindowManager wm, IBinder appToken, String appName,boolean hardwareAccelerated)
+					frameworks/base/core/java/android/app/ContextImpl.java getSystemService(String name)
+					frameworks/base/core/java/android/view/WindowManagerImpl.java createLocalWindowManager(Window parentWindow)....①
+						frameworks/base/core/java/android/view/WindowManagerImpl.java WindowManagerImpl(display, mParentWindow) 
+				frameworks/base/core/java/android/view/Window.java getWindowManager()
+			frameworks/base/core/java/android/app/Activity.java onCreate(Bundle savedInstanceState)
+				frameworks/base/core/java/com/android/internal/policy/PhoneWindow.java  setContentView(@LayoutRes int layoutResID)
+					frameworks/base/core/java/com/android/internal/policy/PhoneWindow.java  installDecor()
+						frameworks/base/core/java/com/android/internal/policy/PhoneWindow.java  mDecor = generateDecor()  //generateDecor来创建一个DecorView对象，并且保存在PhoneWindow类的成员变量mDecor中。 mDecor在addview方法中作为第一个参数会用到
+						frameworks/base/core/java/com/android/internal/policy/PhoneWindow.java  generateLayout(mDecor) 	//generateLayout来根据当前应用程序窗口的Feature来加载对应的窗口布局文件
+					frameworks/base/core/java/android/view/LayoutInflater.java mLayoutInflater.inflate(layoutResID, mContentParent);  加载布局生成
+	frameworks/base/core/java/android/ActivityThread.java handleResumeActivity(IBinder token,boolean clearHide, boolean isForward, int reasonFlags, boolean reallyResume)
+		frameworks/base/core/java/android/ActivityThread.java performResumeActivity(IBinder token,boolean clearHide)
+			frameworks/base/core/java/android/view/WindowManagerImpl.java addView(@NonNull View view, @NonNull ViewGroup.LayoutParams params)   在①中创建
+				frameworks/base/core/java/android/view/WindowManagerGlobal.java addView(View view, ViewGroup.LayoutParams params,Display display, Window parentWindow)
+					frameworks/base/core/java/android/viewViewRootImpl.java ViewRootImpl(Context context, Display display) 
+						frameworks/base/core/java/android/view/WindowManagerGlobal.java getWindowSession()
+							frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java openSession(IWindowSessionCallback callback, IInputMethodClient client,IInputContext inputContext)
+						frameworks/base/core/java/android/viewViewRootImpl.java$W W(ViewRootImpl viewAncestor
+					frameworks/base/core/java/android/viewViewRootImpl.java  setView(View view, WindowManager.LayoutParams attrs, View panelParentView) 
+						frameworks/base/services/core/java/com/android/server/wm/Session.java addToDisplay(IWindow window, int seq, WindowManager.LayoutParams attrs,int viewVisibility, int displayId, Rect outContentInsets, Rect outStableInsets,Rect outOutsets, InputChannel outInputChannel)
+							frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java addWindow(Session session, IWindow client, int seq,WindowManager.LayoutParams attrs, int viewVisibility, int displayId,Rect outContentInsets, Rect outStableInsets, Rect outOutsets,InputChannel outInputChannel)
+								frameworks/base/services/core/java/com/android/server/wm/WindowState.java WindowState(WindowManagerService service, Session s, IWindow c, WindowToken token,WindowState attachedWindow, int appOp, int seq, WindowManager.LayoutParams a,int viewVisibility, final DisplayContent displayContent)
+									frameworks/base/services/core/java/com/android/server/wm/WindowState.java attach()
+										frameworks/base/services/core/java/com/android/server/wm/Session.java windowAddedLocked()
+											frameworks/base/core/java/android/view/SurfaceSession.java SurfaceSession()
+												frameworks/base/core/java/android/view/SurfaceSession.java android_view_SurfaceSession.cpp nativeCreate(JNIEnv* env, jclass clazz)
+											frameworks/base/services/core/java/com/android/server/wm/WindowManagerService.java mService.mSessions.add(this); //创建SurfaceSession对象，并将当前Session添加到WMS.mSessions成员变量。
+ 至此，我们也分析完成Android应用程序窗口与WindowManagerService服务的连接过程了。从这个连接过程以及前面Android应用程序窗口（Activity）的窗口对象（Window）的创建过程分析和Android应用程序窗口（Activity）的视图对象（View）的创建过程分析这两篇文章，我们就可以知道，为了实现一个Activity组件的UI，无论是应用程序进程，还是WindowManagerService，都做了大量的工作，例如，应用程序进程为它创建一个窗口（Window）对象、一个视图（View）对象、一个ViewRoot对象、一个W对象，WindowManagerService服务为它创建一个AppWindowToken对象和一个WindowState对象。此外，WindowManagerService服务还为一个Activity组件所运行在的应用程序进程创建了一个Session对象。理解这些对象的实现以及作用对我们了解Android应用程序窗口的实现框架以及WindowManagerService服务的实现原理都是非常重要的。							至此					
+									
