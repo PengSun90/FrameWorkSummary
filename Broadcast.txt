@@ -1,0 +1,91 @@
+framework/base/core/java/android/content/BroadcastReceiver.java
+framework/base/core/java/android/content/Context.java
+framework/base/core/java/android/content/IntentFilter.java
+
+framework/base/core/java/android/app/ContextImpl.java
+framework/base/core/java/android/app/LoadedApk
+framework/base/core/java/android/app/ActivityManagerNative.java
+framework/base/core/java/android/app/ApplicationThreadNative.java
+framework/base/core/java/android/app/ActivityThread.java
+
+framework/base/services/core/java/com/android/server/ActivityManagerService.java
+framework/base/services/core/java/com/android/server/am/BroadcastQueue.java
+framework/base/services/core/java/com/android/server/am/BroadcastFilter.java
+framework/base/services/core/java/com/android/server/am/BroadcastRecord.java
+framework/base/services/core/java/com/android/server/am/ReceiverList.java
+
+一、概述
+广播(Broadcast)机制用于进程/线程间通信，广播分为广播发送和广播接收两个过程，其中广播接收者BroadcastReceiver便是Android四大组件之一。
+
+BroadcastReceiver分为两类：
+
+静态广播接收者：通过AndroidManifest.xml的标签来申明的BroadcastReceiver。
+动态广播接收者：通过AMS.registerReceiver()方式注册的BroadcastReceiver，动态注册更为灵活，可在不需要时通过unregisterReceiver()取消注册。
+从广播发送方式可分为三类：
+
+普通广播：通过Context.sendBroadcast()发送，可并行处理
+有序广播：通过Context.sendOrderedBroadcast()发送，串行处理
+Sticky广播：通过Context.sendStickyBroadcast()发送
+
+1.1 BroadcastRecord
+广播在系统中以BroadcastRecord对象来记录, 该对象有几个时间相关的成员变量.
+
+final class BroadcastRecord extends Binder {
+    final String callerPackage; //广播发送者
+    final int callingPid;   // 广播发送者pid
+    final List receivers;   // 广播接收者
+    int nextReceiver;  // 下一个被执行的接收者
+    IBinder receiver; // 当前正在处理的接收者
+    int anrCount;   //广播ANR次数
+    
+    long enqueueClockTime;  //入队列时间
+    long dispatchTime;      //分发时间 
+    long dispatchClockTime; //分发时间
+    long receiverTime;      //接收时间(首次等于dispatchClockTime)
+    long finishTime;        //广播完成时间
+    
+}
+enqueueClockTime 伴随着 scheduleBroadcastsLocked
+dispatchClockTime伴随着 deliverToRegisteredReceiverLocked
+finishTime 位于 addBroadcastToHistoryLocked方法内
+
+二、注册广播
+广播注册，对于应用开发来说，往往是在Activity/Service中调用registerReceiver()方法，而Activity或Service都间接继承于Context抽象类，
+真正干活是交给ContextImpl类。另外调用getOuterContext()可获取最外层的调用者Activity或Service。
+
+registerReceiver(BroadcastReceiver receiver, IntentFilter filter); framework/base/core/java/android/app/ContextImpl.java
+	registerReceiver(receiver, filter, null, null) framework/base/core/java/android/app/ContextImpl.java
+		registerReceiverInternal(receiver, getUserId(),filter, broadcastPermission, scheduler, getOuterContext()) framework/base/core/java/android/app/ContextImpl.java //其中broadcastPermission拥有广播的权限控制，scheduler用于指定接收到广播时onRecive执行线程，当scheduler=null则默认代表在主线程中执行，这也是最常见的用法
+			mPackageInfo.getReceiverDispatcher(receiver, context, scheduler,mMainThread.getInstrumentation(), true) framework/base/core/java/android/app/ContextImpl.java  //mPackageInfo为LoadedApk对象。 创建LoadedApk.ReceiverDispatcher分发者。
+				ReceiverDispatcher(BroadcastReceiver receiver, Context context,Handler activityThread, Instrumentation instrumentation,boolean registered) frameworks/base/core/java/android/app/LoadedApk.java //当广播分发者为空，则创建ReceiverDispatcher
+					InnerReceiver(LoadedApk.ReceiverDispatcher rd, boolean strong); frameworks/base/core/java/android/app/LoadedApk.java //ReceiverDispatcher(广播分发者)有一个内部类InnerReceiver，该类继承于IIntentReceiver.Stub。显然，这是一个Binder服务端，广播分发者通过rd.getIIntentReceiver()可获取该Binder服务端对象InnerReceiver，用于Binder IPC通信。
+			 ActivityManagerNative.getDefault().registerReceiver(mMainThread.getApplicationThread(), mBasePackageName,rd, filter, broadcastPermission, userId); framework/base/core/java/android/app/ContextImpl.java 
+				getRecordForAppLocked(caller); framework/base/services/core/java/com/android/server/ActivityManagerService.java //从mLruProcesses查询调用者的进程信息
+				filter.actionsIterator(); framework/base/services/core/java/com/android/server/ActivityManagerService.java //获取IntentFilter中的actions. 这就是平时所加需要监听的广播action
+				 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
