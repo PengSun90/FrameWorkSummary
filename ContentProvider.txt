@@ -1,0 +1,181 @@
+frameworks/base/core/java/android/app/ActivityThread.java
+frameworks/base/core/java/android/app/ContextImpl.java
+frameworks/base/core/java/android/app/IActivityManager.java
+
+frameworks/base/core/java/android/content/ContentResolver.java
+frameworks/base/core/java/android/content/IContentProvider.java
+frameworks/base/core/java/android/content/ContentProvider.java
+frameworks/base/core/java/android/content/ContentProviderNative.java
+
+frameworks/base/services/core/java/com/android/server/am/ContentProviderRecord.java
+	
+1.query过程
+cr = getContentResolver() frameworks/base/core/java/android/app/ContextImpl.java //最终获得mContentResolver对象，mContentResolver对象为ApplicationContentResolver的类型。
+	cr.query(uri, null, null, null, null) frameworks/base/core/java/android/content/ContentResolver.java  //最终调用父类的ContentResolver的query方法。
+		query(uri, projection, selection, selectionArgs, sortOrder, null) frameworks/base/core/java/android/content/ContentResolver.java  
+			acquireUnstableProvider(uri)  frameworks/base/core/java/android/content/ContentResolver.java //获取unstable provider
+				acquireUnstableProvider(mContext, uri.getAuthority()); frameworks/base/core/java/android/content/ContentResolver.java //检查uri是否为content开头之后，继续寻找IContentProvider 对象
+					mMainThread.acquireProvider(c,ContentProvider.getAuthorityWithoutUserId(auth),resolveUserIdFromAuthority(auth), false);   frameworks/base/core/java/android/app/ContextImpl.java$ApplicationContentResolver
+						ContentProvider.getAuthorityWithoutUserId(auth)  frameworks/base/core/java/android/content/ContentProvider.java //getAuthorityWithoutUserId()的过程是字符截断过程，即去掉auth中的UserId信息，比如com.gityuan.articles@123，经过该方法处理后就变成了com.gityuan.articles。
+							acquireExistingProvider(c, auth, userId, stable) frameworks/base/core/java/android/app/ActivityThread.java //查询相对应的provider
+								new ProviderKey(auth, userId); frameworks/base/core/java/android/app/ActivityThread.java   //ProviderKey重写的equal和hascode方法。确保author和userId相同则就是同一个对象
+								ProviderClientRecord pr = mProviderMap.get(key); frameworks/base/core/java/android/app/ActivityThread.java //在数组中查找有无ProviderClientRecord记录没有返回null有则判断对象进程是否或着，如果进程死了返回null。如果活着。则返provider对象。
+							holder = ActivityManagerNative.getDefault().getContentProvider(getApplicationThread(), auth, userId, stable); frameworks/base/core/java/android/app/ActivityThread.java //在上一步provider为空的情况下，则进行创建返回的工作。
+								getContentProviderImpl(caller, name, null, stable, userId);  frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java 
+									getRecordForAppLocked(caller); frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //获取调用者的进程记录ProcessRecord；
+									cpr = mProviderMap.getProviderByName(name, userId); frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //从AMS中查询相应的ContentProviderRecord
+										cpr!=null //ContentProviderRecord存在
+										if (providerRunning) {
+												cpi = cpr.info;
+												//当允许运行在调用者进程且已发布，则直接返回[见小节2.7.4]
+												if (r != null && cpr.canRunHere(r)) {
+													ContentProviderHolder holder = cpr.newHolder(null);
+													holder.provider = null;
+													return holder;
+												}
+
+												final long origId = Binder.clearCallingIdentity();
+												//增加引用计数[见小节2.8.3]
+												conn = incProviderCountLocked(r, cpr, token, stable);
+												if (conn != null && (conn.stableCount+conn.unstableCount) == 1) {
+													if (cpr.proc != null && r.setAdj <= ProcessList.PERCEPTIBLE_APP_ADJ) {
+														//更新进程LRU队列
+														updateLruProcessLocked(cpr.proc, false, null);
+													}
+												}
+
+												if (cpr.proc != null) {
+													boolean success = updateOomAdjLocked(cpr.proc); //更新进程adj
+													if (!success) {
+														//provider进程被杀,则减少引用计数 [见小节2.8.2]
+														boolean lastRef = decProviderCountLocked(conn, cpr, token, stable);
+														appDiedLocked(cpr.proc);
+														if (!lastRef) {
+															return null;
+														}
+														providerRunning = false;
+														conn = null;
+													}
+												}
+												Binder.restoreCallingIdentity(origId);
+											}
+											...
+										}
+																				
+										权限检查
+										当允许运行在调用者进程且已发布，则直接返回
+										增加引用计数
+										更新进程LRU队列
+										更新进程adj
+										当provider进程被杀时，则减少引用计数并调用appDiedLocked，且设置ContentProvider为没有发布的状态
+										
+										cpr==null //ContentProviderRecord不存在
+											cpi = AppGlobals.getPackageManager().resolveContentProvider(name,STOCK_PM_FLAGS | PackageManager.GET_URI_PERMISSION_PATTERNS, userId); frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java ////根据authority，获取ProviderInfo对象
+											ComponentName comp = new ComponentName(cpi.packageName, cpi.name);
+											cpr = mProviderMap.getProviderByClass(comp, userId); @3	frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //在mProviderMap数组中查找cpr，如果为空那就创建一个				
+											cpr.canRunHere(r)；frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java // 条件1：ContentProvider在AndroidManifest.xml文件配置multiprocess=true；或调用者进程与ContentProvider在同一个进程。条件2：ContentProvider进程跟调用者所在进程是同一个uid。
+											getProcessRecordLocked(cpi.processName, cpr.appInfo.uid, false); frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
+											startProcessLocked(cpi.processName,cpr.appInfo, false, 0, "content provider",new ComponentName(cpi.applicationInfo.packageName,cpi.name), false, false, false) frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java // 所需进程未启动则需先启动所需进程
+												generateApplicationProvidersLocked(app) frameworks/base/core/java/android/app/ActivityThread.java @2 //再接下来通过调用generateApplicationProvidersLocked获得需要在这个过程中加载的Content Provider列表
+												bindApplication(...)  frameworks/base/core/java/android/app/ActivityThread.java //调用activitythread的bindapplication,将应用进程的ApplicationThread对象绑定到ActivityManagerService，也就是说获得AppliacationThread对象的代理对象。并且创建application对象并调用其 oncreate方法。
+													handleBindApplication(AppBindData data)  frameworks/base/core/java/android/app/ActivityThread.java
+														installContentProviders(app, providers);  frameworks/base/core/java/android/app/ActivityThread.java //安装ContentProviders
+															IActivityManager.ContentProviderHolder cph = installProvider(context, null, cpi,false /*noisy*/, true /*noReleaseNeeded*/, true /*stable*/); frameworks/base/core/java/android/app/ActivityThread.java //为每一个Content Provider创建一个ContentProviderHolder对象来保存相关的信息并放进result中去。间接获得provide人的代理类。并且调用了oncreate方法。
+																localProvider.getIContentProvider() frameworks/base/core/java/android/app/ActivityThread.java //获得代理类
+																localProvider.attachInfo(c, info);  frameworks/base/core/java/android/app/ActivityThread.java  //调用oncreate方法
+															ActivityManagerNative.getDefault().publishContentProviders(getApplicationThread(), results);  frameworks/base/core/java/android/app/ActivityThread.java  //publishContentProviders函数的作用就是用来唤醒在@1;等待的线程的了
+																ContentProviderRecord dst = r.pubProviders.get(src.info.name); frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //@2时创建的
+																	mProviderMap.putProviderByName(names[j], dst); frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java  //放入mProviderMap 以便@3
+																	mLaunchingProviders.remove(j);  frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //移除mLaunchingProviders中的变量
+																	dst.provider = src.provider;                        
+																	dst.notifyAll();执行了dst.notiryAll语句后，在@1中等待要获取的Content Provider接口加载完毕的线程就被唤醒了。唤醒之后，接 @6 它检查本地ContentProviderRecord变量cpr的provider域不为null，于是就返回了。它最终返回并且继续执行@4
+														mInstrumentation.callApplicationOnCreate(app); //创建application对象													
+											cpr.launchingApp = proc; frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //启动的进程复制给cpr方便以后返回
+											mLaunchingProviders.add(cpr);   frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //将cpr添加到mLaunchingProviders
+										
+										根据authority，获取ProviderInfo对象；
+										权限检查
+										当provider不是运行在system进程，且系统未准备好，则抛出IllegalArgumentException
+										当拥有该provider的用户并没有运行，则直接返回
+										根据ComponentName，从AMS.mProviderMap中查询相应的ContentProviderRecord;
+										当首次调用，则创建对象ContentProviderRecord
+										当允许运行在调用者进程且ProcessRecord不为空，则直接返回
+										当provider并没有处于mLaunchingProviders队列，则启动它
+										当ProcessRecord不为空，则加入到pubProviders，并开始安装provider;
+										当ProcessRecord为空，则启动进程
+										增加引用计数
+										
+										
+										  synchronized (cpr) {             @6        frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
+												while (cpr.provider == null) {
+													if (cpr.launchingApp == null) {
+														Slog.w(TAG, "Unable to launch app "
+																+ cpi.applicationInfo.packageName + "/"
+																+ cpi.applicationInfo.uid + " for provider "
+																+ name + ": launching app became null");
+														EventLog.writeEvent(EventLogTags.AM_PROVIDER_LOST_PROCESS,
+																UserHandle.getUserId(cpi.applicationInfo.uid),
+																cpi.applicationInfo.packageName,
+																cpi.applicationInfo.uid, name);
+														return null;
+													}
+													try {
+														if (DEBUG_MU) Slog.v(TAG_MU,
+																"Waiting to start provider " + cpr
+																+ " launchingApp=" + cpr.launchingApp);
+														if (conn != null) {
+															conn.waiting = true;
+														}
+														cpr.wait(); .............................@1
+													} catch (InterruptedException ex) {
+													} finally {
+														if (conn != null) {
+															conn.waiting = false;
+														}
+													}
+												}     //循环等待,直到provider发布完成才会退出循环.调用了cpr.wait();方法
+											}
+									
+										return cpr != null ? cpr.newHolder(conn) : null;																																																	
+								
+								
+								一般地, 程序进行到此处AT.acquireProvider方法应该已成功获取了Provider对象, 接下来便是在调用端安装Provider.
+								holder = installProvider(c, holder, holder.info,true , holder.noReleaseNeeded, stable); @4 frameworks/base/core/java/android/app/ActivityThread.java   同样是执行installProvider函数，与上面不同，这里传进来的参数holder是不为null的，因此，它不需要执行在本地加载Content Provider的工作，只需要把从ActivityMangerService中获得的Content Provider接口保存在成员变量mProviderMap中就可以了。并该provider的增加引用计数。							
+			qCursor = unstableProvider.query(mPackageName, uri, projection,selection, selectionArgs, sortOrder, remoteCancellationSignal); frameworks/base/core/java/android/content/ContentResolver.java 执行查询操作	
+				query(String callingPkg, Uri uri, String[] projection,String selection, String[] selectionArgs, String sortOrder,ICancellationSignal cancellationSignal)  frameworks/base/core/java/android/content/ContentProvider.java 跨进程调用得到真正的contentproverder的qure函数				
+								
+								
+								
+						
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
