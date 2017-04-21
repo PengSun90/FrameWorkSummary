@@ -19,7 +19,7 @@ startService()； //或 binderService() frameworks/base/core/java/android/app/acti
 		 ActivityManagerNative.getDefault().startService(mMainThread.getApplicationThread(), service, service.resolveTypeIfNeeded(getContentResolver()), getOpPackageName(), user.getIdentifier());frameworks/base/core/java/android/app/ContextImpl.java
 			startService(IApplicationThread caller, Intent service,String resolvedType, String callingPackage, int userId) frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //1.caller：IApplicationThread类型，复杂处理2.service：Intent类型，包含需要运行的service信息3.resolvedType：String类型4.callingPackage: String类型，调用该方法的package5.userId: int类型，用户的id
 				mServices.startServiceLocked(caller, service,resolvedType, callingPid, callingUid, callingPackage, userId); frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java 	//此次的mServices为ActiveServices对象\
-					retrieveServiceLocked(service, resolvedType, callingPackage,callingPid, callingUid, userId, true, callerFg); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java // 检索服务信息
+					retrieveServiceLocked(service, resolvedType, callingPackage,callingPid, callingUid, userId, true, callerFg); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java // 检索服务信息.与packaManager 相关联
 					startServiceInnerLocked(smap, service, r, callerFg, addToStarting);  frameworks/base/services/core/java/com/android/server/am/ActiveServices.java
 						bringUpServiceLocked(r, service.getFlags(), callerFg, false); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java //检查进程是否存在，如果不存在调用mAm.startProcessLocked 开启进程。如果进程存在则调用realStartServiceLocked开启service
 							mAm.startProcessLocked(procName, r.appInfo, true, intentFlags,"service", r.name, false, isolated, false)) frameworks/base/services/core/java/com/android/server/am/ActiveServices.java  //mAm 为ActivityManagerService的对象
@@ -48,14 +48,15 @@ startService()； //或 binderService() frameworks/base/core/java/android/app/acti
 bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
 	mBase.bindService(service, conn, flags);  frameworks/base/core/java/android/app/ContextImpl.java 
 		bindServiceCommon(service, conn, flags, Process.myUserHandle());  frameworks/base/core/java/android/app/ContextImpl.java 
-			mPackageInfo.getServiceDispatcher(conn, getOuterContext(),mMainThread.getHandler(), flags);  frameworks/base/core/java/android/app/ContextImpl.java  //创建对象内部静态类LoadedApk.ServiceDispatcher.InnerConnection的对象;方便新建service的回传IBinder值使用
+			mPackageInfo.getServiceDispatcher(conn, getOuterContext(),mMainThread.getHandler(), flags);  frameworks/base/core/java/android/app/ContextImpl.java  //创建对象内部静态类LoadedApk.ServiceDispatcher.InnerConnection为binder的子类的对象;方便新建service的回传IBinder值使用 
 				sd = new ServiceDispatcher(c, context, handler, flags); frameworks/base/core/java/android/app/LoadedApk.java  //创建服务分发对象 IServiceConnection sd;
 			ActivityManagerNative.getDefault().bindService(mMainThread.getApplicationThread(), getActivityToken(), service,service.resolveTypeIfNeeded(getContentResolver()),sd, flags, getOpPackageName(), user.getIdentifier());  frameworks/base/core/java/android/app/ContextImpl.java  //跨进程
 				mServices.bindServiceLocked(caller, token, service,resolvedType, connection, flags, callingPackage, userId); frameworks/base/core/java/android/app/ActivityManager.java  mService为ActiveServices的对象
-				retrieveServiceLocked(service, resolvedType, callingPackage,Binder.getCallingPid(), Binder.getCallingUid(), userId, true, callerFg); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java 根据用户传递进来Intent来检索相对应的服务
-				s.retrieveAppBindingLocked(service, callerApp); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java //通过retrieveServiceLocked(),根据用户传递进来Intent来检索相对应的服务
+				retrieveServiceLocked(service, resolvedType, callingPackage,Binder.getCallingPid(), Binder.getCallingUid(), userId, true, callerFg); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java 根据用户传递进来Intent来检索相对应的服务，此处和packageManager相关
 				AppBindRecord b = s.retrieveAppBindingLocked(service, callerApp); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java //通过retrieveAppBindingLocked().创建AppBindRecord对象记录着当前ServiceRecord, intent以及发起方的进程信息。
 				ConnectionRecord c = new ConnectionRecord(b, activity,connection, flags, clientLabel, clientIntent);frameworks/base/services/core/java/com/android/server/am/ActiveServices.java  //创建对象ConnectionRecord,此处connection来自发起方，此时将LoadedApk.ServiceDispatcher.InnerConnection对象包装进ConnectionRecord。以InnerConnection为key，以ConnectionRecord为成员的arrayList为value装进ServiceRecord的connections中
+				ArrayList<ConnectionRecord> clist = s.connections.get(binder);  frameworks/base/services/core/java/com/android/server/am/ActiveServices.java
+				clist.add(c); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java //将ConnectionRecord对象C放进ServiceRecord对象s的connections中，方便后文查找使用。步骤1
 				bringUpServiceLocked(s, service.getFlags(), callerFg, false) frameworks/base/services/core/java/com/android/server/am/ActiveServices.java //检查进程是否存在，如果不存在调用mAm.startProcessLocked 开启进程。如果进程存在则调用realStartServiceLocked开启service. 
 					mAm.startProcessLocked(procName, r.appInfo, true, intentFlags,"service", r.name, false, isolated, false)) frameworks/base/services/core/java/com/android/server/am/ActiveServices.java  //mAm 为ActivityManagerService的对象
 								attachApplicationLocked(IApplicationThread thread,int pid) frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java  //进程启动后调用activitythread的attach,最终调用到AMS的attachApplicationLocked方法
@@ -76,11 +77,13 @@ bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
 												requestServiceBindingLocked(r, ibr, execInFg, false); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java 
 													 r.app.thread.scheduleBindService(r, i.intent.getIntent(), rebind, r.app.repProcState); frameworks/base/services/core/java/com/android/server/am/ActiveServices.java //服务进入 onBind()
 														 sendMessage(H.BIND_SERVICE, s)  frameworks/base/core/java/android/app/ActivityThread.java (内含ApplicationThread类) //s.token = token(ServiceRecord类型); s.intent = intent; s.rebind = rebind;
-															handleBindService(BindServiceData data) frameworks/base/core/java/android/app/ActivityThread.java 
-																s.onBind(data.intent); frameworks/base/core/java/android/app/ActivityThread.java  执行创建Service.onBind()回调方法
+															handleBindService(BindServiceData data) frameworks/base/core/java/android/app/ActivityThread.java  //调用handleCreateService()方法时候
+																s.onBind(data.intent); frameworks/base/core/java/android/app/ActivityThread.java  //执行创建Service.onBind()回调方法时增加内容,抽象的方法。
 																ActivityManagerNative.getDefault().publishService(data.token, data.intent, binder);  //将onBind返回值传递回去
 																	mServices.publishServiceLocked((ServiceRecord)token, intent, service);  frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //ActiveServices 的对象为mServices
-																		 c.conn.connected(r.name, service);  frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
+																		ArrayList<ConnectionRecord> clist = r.connections.valueAt(conni);   frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
+																		ConnectionRecord c = clist.get(i);  frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java 前文的步骤一的放进去的内容
+																		c.conn.connected(r.name, service);  frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java //步骤一放进r.connections中的内容
 																			  sd.connected(name, service); /frameworks/base/core/java/android/app/LoadedApk.ServiceDispatcher.InnerConnection //调用LoadedApk.ServiceDispatcher.InnerConnection静态类的connected方法
 																				mActivityThread.post(new RunConnection(name, service, 0)); /frameworks/base/core/java/android/app/LoadedApk.ServiceDispatcher //这是主线程的Handler
 																					doConnected(mName, mService);  frameworks/base/core/java/android/app/LoadedApk.ServiceDispatcher.RunConnection
